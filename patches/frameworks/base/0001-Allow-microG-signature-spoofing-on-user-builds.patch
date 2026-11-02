@@ -1,0 +1,24 @@
+From 77de4c1487d4be7e429a7987cf5b216b2560ad11 Mon Sep 17 00:00:00 2001
+From: Myghi63 <myghi63@disroot.org>
+Date: Sun, 1 Nov 2026 21:07:39 -0300
+Subject: [PATCH] Allow microG signature spoofing on user builds
+
+---
+ services/core/java/com/android/server/pm/ComputerEngine.java | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/services/core/java/com/android/server/pm/ComputerEngine.java b/services/core/java/com/android/server/pm/ComputerEngine.java
+index 4e499dcc6f0a..35210f0d7125 100644
+--- a/services/core/java/com/android/server/pm/ComputerEngine.java
++++ b/services/core/java/com/android/server/pm/ComputerEngine.java
+@@ -1492,10 +1492,6 @@ public class ComputerEngine implements Computer {
+     public static native boolean isDebuggable();
+ 
+     public static boolean isMicrogSigned(AndroidPackage p) {
+-        if (!isDebuggable()) {
+-            return false;
+-        }
+-
+         // Allowlist the following apps:
+         // * com.android.vending - microG Companion
+         // * com.google.android.gms - microG Services
