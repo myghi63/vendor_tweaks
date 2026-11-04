@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Myghi63 <myghi63@disroot.org>
+Date: Wed, 04 Nov 2026 00:55:00 -0300
+Subject: [PATCH] FrameDecoder: Do not use block model with QTI Dolby Vision
+
+Thumbnails of Dolby Vision videos fail with "C2Buffer precond fail" because
+c2.qti.dv.decoder doesn't return a graphic block in block model. Each attempt
+waits for the 2 second timeout and returns no frame, so a gallery keeps asking
+again. Use the regular decoding path for this decoder.
+---
+diff --git a/media/libstagefright/FrameDecoder.cpp b/media/libstagefright/FrameDecoder.cpp
+index 7613ed2906..a8bdd12036 100644
+--- a/media/libstagefright/FrameDecoder.cpp
++++ b/media/libstagefright/FrameDecoder.cpp
+@@ -891,7 +891,9 @@ sp<AMessage> VideoFrameDecoder::onGetFormatAndSeekOptions(
+     if (!isSeekingClosest) {
+         if (mComponentName.startsWithIgnoreCase("c2.")) {
+ #ifndef DISABLE_BLOCK_MODEL
+-            mUseBlockModel = android::media::codec::provider_->thumbnail_block_model();
++            // The QTI Dolby Vision decoder doesn't return graphic blocks in block model.
++            mUseBlockModel = android::media::codec::provider_->thumbnail_block_model()
++                    && !mComponentName.startsWithIgnoreCase("c2.qti.dv.");
+ #else
+             mUseBlockModel = false;
+ #endif
+-- 
+2.51.0
