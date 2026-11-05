@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Myghi63 <myghi63@disroot.org>
+Date: Wed, 04 Nov 2026 18:30:00 -0300
+Subject: [PATCH] camera: Set power mode while a video stream is configured
+
+Devices with their own camera hints need something to send them, and
+camera HALs without Pixel's power integration never do. Enable
+CAMERA_STREAMING_LOW from the first client with a video encoder stream until
+the last one drops it or disconnects.
+---
+diff --git a/services/camera/libcameraservice/Android.bp b/services/camera/libcameraservice/Android.bp
+index 362a390b8f..9082389634 100644
+--- a/services/camera/libcameraservice/Android.bp
++++ b/services/camera/libcameraservice/Android.bp
+@@ -37,8 +37,12 @@ license {
+ 
+ cc_defaults {
+     name: "libcameraservice_deps",
+-    defaults: ["android.hardware.graphics.common-ndk_shared"],
++    defaults: [
++        "android.hardware.graphics.common-ndk_shared",
++        "android.hardware.power-ndk_shared",
++    ],
+     shared_libs: [
++        "libpowermanager",
+         "libactivitymanager_aidl",
+         "libbase",
+         "libdl",
+diff --git a/services/camera/libcameraservice/api2/CameraDeviceClient.cpp b/services/camera/libcameraservice/api2/CameraDeviceClient.cpp
+index 73d906d9d0..f1543d9fc8 100644
+--- a/services/camera/libcameraservice/api2/CameraDeviceClient.cpp
++++ b/services/camera/libcameraservice/api2/CameraDeviceClient.cpp
+@@ -29,6 +29,10 @@
+ #include <android/content/res/CameraCompatibilityInfo.h>
+ #include <camera/CameraUtils.h>
+ #include <camera/StringUtils.h>
++#include <aidl/android/hardware/power/Mode.h>
++#include <powermanager/PowerHalController.h>
++
++#include <mutex>
+ #include <camera/camera2/CaptureRequest.h>
+ #include <com_android_internal_camera_flags.h>
+ #include <cutils/properties.h>
+@@ -833,6 +837,29 @@ binder::Status CameraDeviceClient::cancelRequest(
+     return res;
+ }
+ 
++static void setVideoStreamingPowerMode(bool enabled) {
++    // Several clients can have a video stream at once, so only act on the first and the last one.
++    static std::mutex lock;
++    static android::power::PowerHalController powerHal;
++    static int activeClients = 0;
++
++    std::lock_guard<std::mutex> l(lock);
++    activeClients += enabled ? 1 : -1;
++    if (activeClients != (enabled ? 1 : 0)) return;
++    auto result = powerHal.setMode(aidl::android::hardware::power::Mode::CAMERA_STREAMING_LOW,
++            enabled);
++    if (!result.isOk()) {
++        ALOGW("%s: Failed to set camera streaming mode: %s", __FUNCTION__,
++                result.errorMessage());
++    }
++}
++
++void CameraDeviceClient::updateVideoStreamingPowerMode(bool enabled) {
++    if (mVideoStreamingPowerMode == enabled) return;
++    mVideoStreamingPowerMode = enabled;
++    setVideoStreamingPowerMode(enabled);
++}
++
+ binder::Status CameraDeviceClient::beginConfigure() {
+     ATRACE_CALL();
+     Mutex::Autolock icl(mBinderSerializationLock);
+@@ -895,6 +922,16 @@ binder::Status CameraDeviceClient::endConfigureLocked(int operatingMode,
+     }
+ 
+     status_t err = mDevice->configureStreams(sessionParams, operatingMode);
++    if (err == OK) {
++        bool hasVideoStream = false;
++        for (const auto& [streamId, info] : mStreamInfoMap) {
++            if (info.consumerUsage & GraphicBuffer::USAGE_HW_VIDEO_ENCODER) {
++                hasVideoStream = true;
++                break;
++            }
++        }
++        updateVideoStreamingPowerMode(hasVideoStream);
++    }
+     if (err == BAD_VALUE) {
+         std::string msg = fmt::sprintf("Camera %s: Unsupported set of inputs/outputs provided",
+                 mCameraIdStr.c_str());
+@@ -2796,6 +2833,8 @@ void CameraDeviceClient::notifyClientSharedAccessPriorityChanged(bool primaryCli
+ void CameraDeviceClient::detachDevice() {
+     if (mDevice == 0) return;
+ 
++    updateVideoStreamingPowerMode(false);
++
+     nsecs_t startTime = systemTime();
+     if (mFrameProcessor.get() != nullptr) {
+             mFrameProcessor->removeListener(
+diff --git a/services/camera/libcameraservice/api2/CameraDeviceClient.h b/services/camera/libcameraservice/api2/CameraDeviceClient.h
+index eea3cb9125..4d6ee2f647 100644
+--- a/services/camera/libcameraservice/api2/CameraDeviceClient.h
++++ b/services/camera/libcameraservice/api2/CameraDeviceClient.h
+@@ -308,6 +308,9 @@ protected:
+     const CameraMetadata &getStaticInfo(const std::string &cameraId);
+ 
+ private:
++    void updateVideoStreamingPowerMode(bool enabled);
++    bool mVideoStreamingPowerMode = false;
++
+     using MetadataQueue = AidlMessageQueueCpp<
+             int8_t, android::hardware::common::fmq::SynchronizedReadWrite>;
+     using CameraMetadataInfo = android::hardware::camera2::CameraMetadataInfo;
+-- 
+2.51.0
