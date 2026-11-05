@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Myghi63 <myghi63@disroot.org>
+Date: Wed, 04 Nov 2026 21:26:04 -0300
+Subject: [PATCH] cc: Build armv9-2a without SVE
+
+SoCs like sm8735 implement armv9.2-a but do not expose SVE to userspace, so
+code vectorized for it crashes. Keep the rest of the architecture and turn
+SVE off, and enable crypto since these CPUs have it.
+---
+diff --git a/cc/config/arm64_device.go b/cc/config/arm64_device.go
+index d877b65f8..c808222ea 100644
+--- a/cc/config/arm64_device.go
++++ b/cc/config/arm64_device.go
+@@ -41,7 +41,7 @@ var (
+ 		"armv8-5a":           {"-march=armv8.5-a"},
+ 		"armv8-7a":           {"-march=armv8.7-a"},
+ 		"armv9-a":            {"-march=armv9-a"},
+-		"armv9-2a":           {"-march=armv9.2-a"},
++		"armv9-2a":           {"-march=armv9.2-a+crypto+nosve"},
+ 		"armv9-3a":           {"-march=armv9.3-a"},
+ 		"armv9-4a":           {"-march=armv9.4-a"},
+ 	}
