@@ -5,7 +5,7 @@ Small ROM tweaks kept out of upstream repos. Each ROM has its own branch:
 | Branch | Tweaks |
 |--------|--------|
 | `crDroid-16.0` | Fast-skip boot animation |
-| `lineageOS-24.0` | microG signature spoofing on user builds |
+| `lineageOS-24.0` | microG signature spoofing on user builds, IME nav bar space overlay |
 
 The device tree wires this repo softly, so the build skips it if it is not synced:
 
