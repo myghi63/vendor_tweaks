@@ -1,24 +1,28 @@
-From 319091a4da776a9dc9eaaec51142688f3a2b67de Mon Sep 17 00:00:00 2001
+From 96984eb3cf7a7a5d8bde5abfb947e659e4bab68d Mon Sep 17 00:00:00 2001
 From: Myghi63 <myghi63@disroot.org>
-Date: Sat, 21 Nov 2026 13:39:29 -0300
+Date: Sat, 21 Nov 2026 19:53:55 -0300
 Subject: [PATCH] game space: framework hooks for the GameSpace app
 
 Squashed GameListManager/GameSpaceService/GamePackageHandler series:
 core support, treat gamespace apps as games, the auto-detect toggle,
-and auto-detected games joining at the standard mode.
+auto-detected games joining at the standard mode, and the per-game
+touch sampling boost applied through the touchfeature HAL.
+
+Change-Id: Ie0ba5df1c8fdb14203e02088ffc70b4ca90ea091
 ---
  .../collection/NotificationEntry.java         |   9 +
  .../StatusBarNotificationActivityStarter.java |   3 +
- .../server/app/GameManagerService.java        |  18 ++
+ services/core/Android.bp                      |   1 +
+ .../server/app/GameManagerService.java        |  18 +
  .../server/wm/ActivityTaskSupervisor.java     |   5 +
  .../com/android/server/wm/DisplayContent.java |   8 +
- .../android/server/wm/GameListManager.java    | 240 ++++++++++++++++++
- .../android/server/wm/GamePackageHandler.java |  92 +++++++
- .../android/server/wm/GameSpaceService.java   | 196 ++++++++++++++
- .../server/wm/GameStateDispatcher.java        | 181 +++++++++++++
+ .../android/server/wm/GameListManager.java    | 240 ++++++++++++
+ .../android/server/wm/GamePackageHandler.java |  92 +++++
+ .../android/server/wm/GameSpaceService.java   | 196 ++++++++++
+ .../server/wm/GameStateDispatcher.java        | 345 ++++++++++++++++++
  .../android/server/wm/KeyguardController.java |   9 +
  .../java/com/android/server/SystemServer.java |   5 +
- 11 files changed, 766 insertions(+)
+ 12 files changed, 931 insertions(+)
  create mode 100644 services/core/java/com/android/server/wm/GameListManager.java
  create mode 100644 services/core/java/com/android/server/wm/GamePackageHandler.java
  create mode 100644 services/core/java/com/android/server/wm/GameSpaceService.java
@@ -70,6 +74,18 @@ index 7e72f6b7af4b..4d063cb3f02a 100644
          // Skip if device is in VR mode.
          if (mPresenter.isDeviceInVrMode()) {
              mLogger.logFullScreenIntentSuppressedByVR(entry);
+diff --git a/services/core/Android.bp b/services/core/Android.bp
+index 7ce5d205b891..52a72c59112e 100644
+--- a/services/core/Android.bp
++++ b/services/core/Android.bp
+@@ -223,6 +223,7 @@ java_library_static {
+         "android.hardware.ir-V1-java",
+         "android.hardware.rebootescrow-V1-java",
+         "android.hardware.power.stats-V2-java",
++        "vendor.xiaomi.hw.touchfeature-V1-java", // AIDL
+         "android.hidl.manager-V1.2-java",
+         "android.media.audiopolicy-aconfig-java",
+         "cbor-java",
 diff --git a/services/core/java/com/android/server/app/GameManagerService.java b/services/core/java/com/android/server/app/GameManagerService.java
 index d6ea4d2368c8..e14b5acb4384 100644
 --- a/services/core/java/com/android/server/app/GameManagerService.java
@@ -707,10 +723,10 @@ index 000000000000..2847bdd9c8a0
 +}
 diff --git a/services/core/java/com/android/server/wm/GameStateDispatcher.java b/services/core/java/com/android/server/wm/GameStateDispatcher.java
 new file mode 100644
-index 000000000000..967ceb084279
+index 000000000000..e4463b3c362d
 --- /dev/null
 +++ b/services/core/java/com/android/server/wm/GameStateDispatcher.java
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,345 @@
 +/*
 + * Copyright (C) 2025-2026 AxionOS
 + *
@@ -729,16 +745,25 @@ index 000000000000..967ceb084279
 +package com.android.server.wm;
 +
 +import android.app.ActivityManager;
++import android.app.GameManager;
 +import android.app.IActivityManager;
 +import android.content.ComponentName;
++import android.content.ContentResolver;
 +import android.content.Context;
 +import android.content.Intent;
++import android.database.ContentObserver;
 +import android.os.BatteryManager;
++import android.os.Handler;
++import android.os.IBinder;
++import android.os.Looper;
 +import android.os.RemoteException;
++import android.os.ServiceManager;
 +import android.os.SystemProperties;
 +import android.os.UserHandle;
 +import android.provider.Settings;
 +import android.util.Slog;
++
++import vendor.xiaomi.hw.touchfeature.ITouchFeature;
 +
 +import lineageos.health.HealthInterface;
 +
@@ -755,7 +780,19 @@ index 000000000000..967ceb084279
 +    private static final String KEY_BYPASS_CHARGE_ENABLED = "bypass_charge_enabled";
 +    private static final String KEY_POWER_MODE_PERF_BY_USER = "power_mode_perf_by_user";
 +    private static final String KEY_POWER_MODE_PERF = "persist.sys.power_mode_perf";
++    private static final String KEY_GAME_LIST = "gamespace_game_list";
++    private static final String KEY_TOUCH_BOOST = "gamespace_touch_boost";
++    private static final String TOUCHFEATURE_SERVICE =
++            "vendor.xiaomi.hw.touchfeature.ITouchFeature/default";
 +    private static final int DEFAULT_CHARGE_LIMIT = 100;
++
++    private static final int TOUCH_MODE_GAME = 0;
++    private static final int TOUCH_MODE_REPORT_RATE = 1011;
++    private static final int TOUCH_BOOST_OFF = 0;
++    private static final int TOUCH_BOOST_DEFAULT = 1;
++    private static final int TOUCH_BOOST_MAX = 2;
++    private static final int TOUCH_REPORT_RATE_STOCK = 120;
++    private static final int TOUCH_REPORT_RATE_MAX = 240;
 +
 +    private final Context mContext;
 +    private final IActivityManager mActivityManager;
@@ -764,9 +801,22 @@ index 000000000000..967ceb084279
 +    private boolean mWasChargingControlEnabled;
 +    private boolean mBypassChargeActive;
 +
++    private String mActiveGamePackage;
++    private int mAppliedTouchBoost = -1;
++    private ITouchFeature mTouchFeature;
++
++    private final ContentObserver mTouchBoostObserver = new ContentObserver(
++            new Handler(Looper.getMainLooper())) {
++        @Override
++        public void onChange(boolean selfChange) {
++            reevaluateTouchBoost();
++        }
++    };
++
 +    GameStateDispatcher(Context context) {
 +        mContext = context;
 +        mActivityManager = ActivityManager.getService();
++        registerTouchBoostObserver();
 +    }
 +
 +    void dispatchGameState(boolean active, String packageName) {
@@ -774,6 +824,7 @@ index 000000000000..967ceb084279
 +                active ? 1 : 0, UserHandle.USER_CURRENT);
 +        updateGameSession(active, packageName);
 +        updateBypassCharge(active);
++        updateTouchBoost(active, packageName);
 +    }
 +
 +    void boostGame(boolean enable) {
@@ -889,6 +940,135 @@ index 000000000000..967ceb084279
 +            health.setEnabled(value || mWasChargingControlEnabled);
 +        } catch (Exception e) {
 +            Slog.w(TAG, "Failed to set charging bypass", e);
++        }
++    }
++
++    private void registerTouchBoostObserver() {
++        final ContentResolver resolver = mContext.getContentResolver();
++        resolver.registerContentObserver(Settings.System.getUriFor(KEY_TOUCH_BOOST),
++                false, mTouchBoostObserver, UserHandle.USER_CURRENT);
++        resolver.registerContentObserver(Settings.System.getUriFor(KEY_GAME_LIST),
++                false, mTouchBoostObserver, UserHandle.USER_CURRENT);
++    }
++
++    private void updateTouchBoost(boolean active, String packageName) {
++        mActiveGamePackage = active ? packageName : null;
++        if (active) {
++            applyTouchBoost(resolveTouchBoostLevel(packageName));
++        } else {
++            resetTouchBoost();
++        }
++    }
++
++    private void reevaluateTouchBoost() {
++        if (mActiveGamePackage != null) {
++            applyTouchBoost(resolveTouchBoostLevel(mActiveGamePackage));
++        }
++    }
++
++    private int resolveTouchBoostLevel(String packageName) {
++        final String override = Settings.System.getStringForUser(
++                mContext.getContentResolver(), KEY_TOUCH_BOOST, UserHandle.USER_CURRENT);
++        if (override != null) {
++            for (String entry : override.split(";")) {
++                final String[] parts = entry.split("=");
++                if (parts.length != 2 || !packageName.equals(parts[0])) {
++                    continue;
++                }
++                final Integer level = toIntOrNull(parts[1]);
++                if (level != null && level >= TOUCH_BOOST_OFF && level <= TOUCH_BOOST_MAX) {
++                    return level;
++                }
++            }
++        }
++        final int gameMode = lookupGameMode(packageName);
++        if (gameMode == GameManager.GAME_MODE_PERFORMANCE) {
++            return TOUCH_BOOST_MAX;
++        }
++        if (gameMode == GameManager.GAME_MODE_BATTERY_SAVER) {
++            return TOUCH_BOOST_OFF;
++        }
++        return TOUCH_BOOST_DEFAULT;
++    }
++
++    private int lookupGameMode(String packageName) {
++        final String raw = Settings.System.getStringForUser(
++                mContext.getContentResolver(), KEY_GAME_LIST, UserHandle.USER_CURRENT);
++        if (raw == null) {
++            return GameManager.GAME_MODE_STANDARD;
++        }
++        for (String entry : raw.split(";")) {
++            final String[] parts = entry.split("=");
++            if (parts.length == 2 && packageName.equals(parts[0])) {
++                final Integer mode = toIntOrNull(parts[1]);
++                if (mode != null) {
++                    return mode;
++                }
++            }
++        }
++        return GameManager.GAME_MODE_STANDARD;
++    }
++
++    private void applyTouchBoost(int level) {
++        if (level == mAppliedTouchBoost) {
++            return;
++        }
++        resetTouchBoost();
++        switch (level) {
++            case TOUCH_BOOST_DEFAULT:
++                setTouchModeValue(TOUCH_MODE_GAME, 1);
++                break;
++            case TOUCH_BOOST_MAX:
++                setTouchModeValue(TOUCH_MODE_GAME, 1);
++                setTouchModeValue(TOUCH_MODE_REPORT_RATE, TOUCH_REPORT_RATE_MAX);
++                break;
++            default:
++                return;
++        }
++        mAppliedTouchBoost = level;
++        Slog.i(TAG, "Touch boost level " + level + " applied for " + mActiveGamePackage);
++    }
++
++    private void resetTouchBoost() {
++        if (mAppliedTouchBoost <= TOUCH_BOOST_OFF) {
++            return;
++        }
++        if (mAppliedTouchBoost == TOUCH_BOOST_MAX) {
++            setTouchModeValue(TOUCH_MODE_REPORT_RATE, TOUCH_REPORT_RATE_STOCK);
++        }
++        setTouchModeValue(TOUCH_MODE_GAME, 0);
++        mAppliedTouchBoost = -1;
++    }
++
++    private void setTouchModeValue(int mode, int value) {
++        final ITouchFeature touch = getTouchFeature();
++        if (touch == null) {
++            return;
++        }
++        try {
++            touch.setModeValue(0 /* touch_id */, mode, value);
++        } catch (RemoteException e) {
++            Slog.w(TAG, "Failed to set touch mode " + mode + " value " + value, e);
++            mTouchFeature = null;
++        }
++    }
++
++    private ITouchFeature getTouchFeature() {
++        if (mTouchFeature == null) {
++            final IBinder binder = ServiceManager.getService(TOUCHFEATURE_SERVICE);
++            if (binder == null) {
++                return null;
++            }
++            mTouchFeature = ITouchFeature.Stub.asInterface(binder);
++        }
++        return mTouchFeature;
++    }
++
++    private static Integer toIntOrNull(String value) {
++        try {
++            return Integer.parseInt(value);
++        } catch (NumberFormatException e) {
++            return null;
 +        }
 +    }
 +}
