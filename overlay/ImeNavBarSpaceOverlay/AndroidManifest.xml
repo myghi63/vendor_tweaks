@@ -3,6 +3,6 @@
     package="com.tweaks.overlay.imenavbarspace"
     android:versionCode="1"
     android:versionName="1.0">
-    <overlay android:targetPackage="android" android:priority="2" />
+    <overlay android:targetPackage="android" android:priority="2" android:isStatic="true" />
     <application android:label="ImeNavBarSpaceOverlay" android:hasCode="false" />
 </manifest>
