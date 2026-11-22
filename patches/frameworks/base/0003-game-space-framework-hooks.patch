@@ -1,6 +1,6 @@
 From 96984eb3cf7a7a5d8bde5abfb947e659e4bab68d Mon Sep 17 00:00:00 2001
 From: Myghi63 <myghi63@disroot.org>
-Date: Sat, 21 Nov 2026 19:53:55 -0300
+Date: Sat, 21 Nov 2026 21:09:28 
 Subject: [PATCH] game space: framework hooks for the GameSpace app
 
 Squashed GameListManager/GameSpaceService/GamePackageHandler series:
@@ -74,18 +74,6 @@ index 7e72f6b7af4b..4d063cb3f02a 100644
          // Skip if device is in VR mode.
          if (mPresenter.isDeviceInVrMode()) {
              mLogger.logFullScreenIntentSuppressedByVR(entry);
-diff --git a/services/core/Android.bp b/services/core/Android.bp
-index 7ce5d205b891..52a72c59112e 100644
---- a/services/core/Android.bp
-+++ b/services/core/Android.bp
-@@ -223,6 +223,7 @@ java_library_static {
-         "android.hardware.ir-V1-java",
-         "android.hardware.rebootescrow-V1-java",
-         "android.hardware.power.stats-V2-java",
-+        "vendor.xiaomi.hw.touchfeature-V1-java", // AIDL
-         "android.hidl.manager-V1.2-java",
-         "android.media.audiopolicy-aconfig-java",
-         "cbor-java",
 diff --git a/services/core/java/com/android/server/app/GameManagerService.java b/services/core/java/com/android/server/app/GameManagerService.java
 index d6ea4d2368c8..e14b5acb4384 100644
 --- a/services/core/java/com/android/server/app/GameManagerService.java
@@ -177,10 +165,10 @@ index c55085d3e416..abcde6defb30 100644
      }
 diff --git a/services/core/java/com/android/server/wm/GameListManager.java b/services/core/java/com/android/server/wm/GameListManager.java
 new file mode 100644
-index 000000000000..b0a79c20f001
+index 000000000000..ec06a118634e
 --- /dev/null
 +++ b/services/core/java/com/android/server/wm/GameListManager.java
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,237 @@
 +/*
 + * Copyright (C) 2025-2026 AxionOS
 + *
@@ -220,7 +208,6 @@ index 000000000000..b0a79c20f001
 +
 +    private static final String GAME_LIST_KEY = "gamespace_game_list";
 +    private static final String PERF_MODE_VALUE = "2";
-+    private static final String STANDARD_MODE_VALUE = "1";
 +    private static final String DENIED_LIST_KEY = "gamespace_denied_list";
 +
 +    private final Context mContext;
@@ -359,11 +346,9 @@ index 000000000000..b0a79c20f001
 +
 +        final boolean modified;
 +        if (add) {
-+            // Auto-detected games join at the standard mode; performance is only
-+            // ever tagged explicitly (from the app), never inherited by detection.
-+            modified = !gameMap.containsKey(packageName);
++            modified = !PERF_MODE_VALUE.equals(gameMap.get(packageName));
 +            if (modified) {
-+                gameMap.put(packageName, STANDARD_MODE_VALUE);
++                gameMap.put(packageName, PERF_MODE_VALUE);
 +            }
 +        } else {
 +            modified = gameMap.remove(packageName) != null;
@@ -377,7 +362,7 @@ index 000000000000..b0a79c20f001
 +                UserHandle.USER_CURRENT);
 +        synchronized (mGameList) {
 +            if (add) {
-+                mGameList.put(packageName, STANDARD_MODE_VALUE);
++                mGameList.put(packageName, PERF_MODE_VALUE);
 +            } else {
 +                mGameList.remove(packageName);
 +            }
@@ -723,10 +708,10 @@ index 000000000000..2847bdd9c8a0
 +}
 diff --git a/services/core/java/com/android/server/wm/GameStateDispatcher.java b/services/core/java/com/android/server/wm/GameStateDispatcher.java
 new file mode 100644
-index 000000000000..e4463b3c362d
+index 000000000000..967ceb084279
 --- /dev/null
 +++ b/services/core/java/com/android/server/wm/GameStateDispatcher.java
-@@ -0,0 +1,345 @@
+@@ -0,0 +1,181 @@
 +/*
 + * Copyright (C) 2025-2026 AxionOS
 + *
@@ -745,25 +730,16 @@ index 000000000000..e4463b3c362d
 +package com.android.server.wm;
 +
 +import android.app.ActivityManager;
-+import android.app.GameManager;
 +import android.app.IActivityManager;
 +import android.content.ComponentName;
-+import android.content.ContentResolver;
 +import android.content.Context;
 +import android.content.Intent;
-+import android.database.ContentObserver;
 +import android.os.BatteryManager;
-+import android.os.Handler;
-+import android.os.IBinder;
-+import android.os.Looper;
 +import android.os.RemoteException;
-+import android.os.ServiceManager;
 +import android.os.SystemProperties;
 +import android.os.UserHandle;
 +import android.provider.Settings;
 +import android.util.Slog;
-+
-+import vendor.xiaomi.hw.touchfeature.ITouchFeature;
 +
 +import lineageos.health.HealthInterface;
 +
@@ -780,19 +756,7 @@ index 000000000000..e4463b3c362d
 +    private static final String KEY_BYPASS_CHARGE_ENABLED = "bypass_charge_enabled";
 +    private static final String KEY_POWER_MODE_PERF_BY_USER = "power_mode_perf_by_user";
 +    private static final String KEY_POWER_MODE_PERF = "persist.sys.power_mode_perf";
-+    private static final String KEY_GAME_LIST = "gamespace_game_list";
-+    private static final String KEY_TOUCH_BOOST = "gamespace_touch_boost";
-+    private static final String TOUCHFEATURE_SERVICE =
-+            "vendor.xiaomi.hw.touchfeature.ITouchFeature/default";
 +    private static final int DEFAULT_CHARGE_LIMIT = 100;
-+
-+    private static final int TOUCH_MODE_GAME = 0;
-+    private static final int TOUCH_MODE_REPORT_RATE = 1011;
-+    private static final int TOUCH_BOOST_OFF = 0;
-+    private static final int TOUCH_BOOST_DEFAULT = 1;
-+    private static final int TOUCH_BOOST_MAX = 2;
-+    private static final int TOUCH_REPORT_RATE_STOCK = 120;
-+    private static final int TOUCH_REPORT_RATE_MAX = 240;
 +
 +    private final Context mContext;
 +    private final IActivityManager mActivityManager;
@@ -801,22 +765,9 @@ index 000000000000..e4463b3c362d
 +    private boolean mWasChargingControlEnabled;
 +    private boolean mBypassChargeActive;
 +
-+    private String mActiveGamePackage;
-+    private int mAppliedTouchBoost = -1;
-+    private ITouchFeature mTouchFeature;
-+
-+    private final ContentObserver mTouchBoostObserver = new ContentObserver(
-+            new Handler(Looper.getMainLooper())) {
-+        @Override
-+        public void onChange(boolean selfChange) {
-+            reevaluateTouchBoost();
-+        }
-+    };
-+
 +    GameStateDispatcher(Context context) {
 +        mContext = context;
 +        mActivityManager = ActivityManager.getService();
-+        registerTouchBoostObserver();
 +    }
 +
 +    void dispatchGameState(boolean active, String packageName) {
@@ -824,7 +775,6 @@ index 000000000000..e4463b3c362d
 +                active ? 1 : 0, UserHandle.USER_CURRENT);
 +        updateGameSession(active, packageName);
 +        updateBypassCharge(active);
-+        updateTouchBoost(active, packageName);
 +    }
 +
 +    void boostGame(boolean enable) {
@@ -942,6 +892,191 @@ index 000000000000..e4463b3c362d
 +            Slog.w(TAG, "Failed to set charging bypass", e);
 +        }
 +    }
++}
+diff --git a/services/core/java/com/android/server/wm/KeyguardController.java b/services/core/java/com/android/server/wm/KeyguardController.java
+index e9294c09736f..21a4f97a9164 100644
+--- a/services/core/java/com/android/server/wm/KeyguardController.java
++++ b/services/core/java/com/android/server/wm/KeyguardController.java
+@@ -61,6 +61,7 @@ import android.util.proto.ProtoOutputStream;
+ import android.view.Display;
+ 
+ import com.android.internal.policy.IKeyguardDismissCallback;
++import com.android.server.LocalServices;
+ import com.android.server.inputmethod.InputMethodManagerInternal;
+ import com.android.server.policy.WindowManagerPolicy;
+ import com.android.window.flags.Flags;
+@@ -240,6 +241,14 @@ class KeyguardController {
+         state.mAodShowing = aodShowing;
+         state.writeEventLog("setKeyguardShown");
+ 
++        if (displayId == DEFAULT_DISPLAY && keyguardChanged) {
++            final GameSpaceService gameSpaceService =
++                    LocalServices.getService(GameSpaceService.class);
++            if (gameSpaceService != null) {
++                gameSpaceService.onKeyguardChanged(keyguardShowing);
++            }
++        }
++
+         if (keyguardChanged || (Flags.aodTransition() && aodChanged)) {
+             if (keyguardChanged) {
+                 // Irrelevant to AOD.
+diff --git a/services/java/com/android/server/SystemServer.java b/services/java/com/android/server/SystemServer.java
+index fc8d39c0431b..140e0322fb53 100644
+--- a/services/java/com/android/server/SystemServer.java
++++ b/services/java/com/android/server/SystemServer.java
+@@ -323,6 +323,7 @@ import com.android.server.wallpapereffectsgeneration.WallpaperEffectsGenerationM
+ import com.android.server.wearable.WearableSensingManagerService;
+ import com.android.server.webkit.WebViewUpdateService;
+ import com.android.server.wm.ActivityTaskManagerService;
++import com.android.server.wm.GameSpaceService;
+ import com.android.server.wm.WindowManagerGlobalLock;
+ import com.android.server.wm.WindowManagerService;
+ 
+@@ -1773,6 +1774,10 @@ public final class SystemServer implements Dumpable {
+             wm.onInitReady();
+             t.traceEnd();
+ 
++            t.traceBegin("StartGameSpaceService");
++            mSystemServiceManager.startService(GameSpaceService.class);
++            t.traceEnd();
++
+             // Start receiving calls from SensorManager services. Start in a separate thread
+             // because it need to connect to SensorManager. This has to start
+             // after PHASE_WAIT_FOR_SENSOR_SERVICE is done.
+diff --git a/services/core/java/com/android/server/wm/GameListManager.java b/services/core/java/com/android/server/wm/GameListManager.java
+index ec06a118634e..b0a79c20f001 100644
+--- a/services/core/java/com/android/server/wm/GameListManager.java
++++ b/services/core/java/com/android/server/wm/GameListManager.java
+@@ -37,6 +37,7 @@ class GameListManager {
+ 
+     private static final String GAME_LIST_KEY = "gamespace_game_list";
+     private static final String PERF_MODE_VALUE = "2";
++    private static final String STANDARD_MODE_VALUE = "1";
+     private static final String DENIED_LIST_KEY = "gamespace_denied_list";
+ 
+     private final Context mContext;
+@@ -175,9 +176,11 @@ class GameListManager {
+ 
+         final boolean modified;
+         if (add) {
+-            modified = !PERF_MODE_VALUE.equals(gameMap.get(packageName));
++            // Auto-detected games join at the standard mode; performance is only
++            // ever tagged explicitly (from the app), never inherited by detection.
++            modified = !gameMap.containsKey(packageName);
+             if (modified) {
+-                gameMap.put(packageName, PERF_MODE_VALUE);
++                gameMap.put(packageName, STANDARD_MODE_VALUE);
+             }
+         } else {
+             modified = gameMap.remove(packageName) != null;
+@@ -191,7 +194,7 @@ class GameListManager {
+                 UserHandle.USER_CURRENT);
+         synchronized (mGameList) {
+             if (add) {
+-                mGameList.put(packageName, PERF_MODE_VALUE);
++                mGameList.put(packageName, STANDARD_MODE_VALUE);
+             } else {
+                 mGameList.remove(packageName);
+             }
+diff --git a/services/core/Android.bp b/services/core/Android.bp
+index 7ce5d205b891..52a72c59112e 100644
+--- a/services/core/Android.bp
++++ b/services/core/Android.bp
+@@ -223,6 +223,7 @@ java_library_static {
+         "android.hardware.ir-V1-java",
+         "android.hardware.rebootescrow-V1-java",
+         "android.hardware.power.stats-V2-java",
++        "vendor.xiaomi.hw.touchfeature-V1-java", // AIDL
+         "android.hidl.manager-V1.2-java",
+         "android.media.audiopolicy-aconfig-java",
+         "cbor-java",
+diff --git a/services/core/java/com/android/server/wm/GameStateDispatcher.java b/services/core/java/com/android/server/wm/GameStateDispatcher.java
+index 967ceb084279..024e503b6512 100644
+--- a/services/core/java/com/android/server/wm/GameStateDispatcher.java
++++ b/services/core/java/com/android/server/wm/GameStateDispatcher.java
+@@ -16,17 +16,26 @@
+ package com.android.server.wm;
+ 
+ import android.app.ActivityManager;
++import android.app.GameManager;
+ import android.app.IActivityManager;
+ import android.content.ComponentName;
++import android.content.ContentResolver;
+ import android.content.Context;
+ import android.content.Intent;
++import android.database.ContentObserver;
+ import android.os.BatteryManager;
++import android.os.Handler;
++import android.os.IBinder;
++import android.os.Looper;
+ import android.os.RemoteException;
++import android.os.ServiceManager;
+ import android.os.SystemProperties;
+ import android.os.UserHandle;
+ import android.provider.Settings;
+ import android.util.Slog;
+ 
++import vendor.xiaomi.hw.touchfeature.ITouchFeature;
++
+ import lineageos.health.HealthInterface;
+ 
+ class GameStateDispatcher {
+@@ -42,8 +51,20 @@ class GameStateDispatcher {
+     private static final String KEY_BYPASS_CHARGE_ENABLED = "bypass_charge_enabled";
+     private static final String KEY_POWER_MODE_PERF_BY_USER = "power_mode_perf_by_user";
+     private static final String KEY_POWER_MODE_PERF = "persist.sys.power_mode_perf";
++    private static final String KEY_GAME_LIST = "gamespace_game_list";
++    private static final String KEY_TOUCH_BOOST = "gamespace_touch_boost";
++    private static final String TOUCHFEATURE_SERVICE =
++            "vendor.xiaomi.hw.touchfeature.ITouchFeature/default";
+     private static final int DEFAULT_CHARGE_LIMIT = 100;
+ 
++    private static final int TOUCH_MODE_GAME = 0;
++    private static final int TOUCH_MODE_REPORT_RATE = 1011;
++    private static final int TOUCH_BOOST_OFF = 0;
++    private static final int TOUCH_BOOST_DEFAULT = 1;
++    private static final int TOUCH_BOOST_MAX = 2;
++    private static final int TOUCH_REPORT_RATE_STOCK = 120;
++    private static final int TOUCH_REPORT_RATE_MAX = 240;
++
+     private final Context mContext;
+     private final IActivityManager mActivityManager;
+ 
+@@ -51,9 +72,22 @@ class GameStateDispatcher {
+     private boolean mWasChargingControlEnabled;
+     private boolean mBypassChargeActive;
+ 
++    private String mActiveGamePackage;
++    private int mAppliedTouchBoost = -1;
++    private ITouchFeature mTouchFeature;
++
++    private final ContentObserver mTouchBoostObserver = new ContentObserver(
++            new Handler(Looper.getMainLooper())) {
++        @Override
++        public void onChange(boolean selfChange) {
++            reevaluateTouchBoost();
++        }
++    };
++
+     GameStateDispatcher(Context context) {
+         mContext = context;
+         mActivityManager = ActivityManager.getService();
++        registerTouchBoostObserver();
+     }
+ 
+     void dispatchGameState(boolean active, String packageName) {
+@@ -61,6 +95,7 @@ class GameStateDispatcher {
+                 active ? 1 : 0, UserHandle.USER_CURRENT);
+         updateGameSession(active, packageName);
+         updateBypassCharge(active);
++        updateTouchBoost(active, packageName);
+     }
+ 
+     void boostGame(boolean enable) {
+@@ -178,4 +213,133 @@ class GameStateDispatcher {
+             Slog.w(TAG, "Failed to set charging bypass", e);
+         }
+     }
 +
 +    private void registerTouchBoostObserver() {
 +        final ContentResolver resolver = mContext.getContentResolver();
@@ -985,7 +1120,7 @@ index 000000000000..e4463b3c362d
 +        if (gameMode == GameManager.GAME_MODE_PERFORMANCE) {
 +            return TOUCH_BOOST_MAX;
 +        }
-+        if (gameMode == GameManager.GAME_MODE_BATTERY_SAVER) {
++        if (gameMode == GameManager.GAME_MODE_BATTERY) {
 +            return TOUCH_BOOST_OFF;
 +        }
 +        return TOUCH_BOOST_DEFAULT;
@@ -1071,57 +1206,4 @@ index 000000000000..e4463b3c362d
 +            return null;
 +        }
 +    }
-+}
-diff --git a/services/core/java/com/android/server/wm/KeyguardController.java b/services/core/java/com/android/server/wm/KeyguardController.java
-index e9294c09736f..21a4f97a9164 100644
---- a/services/core/java/com/android/server/wm/KeyguardController.java
-+++ b/services/core/java/com/android/server/wm/KeyguardController.java
-@@ -61,6 +61,7 @@ import android.util.proto.ProtoOutputStream;
- import android.view.Display;
- 
- import com.android.internal.policy.IKeyguardDismissCallback;
-+import com.android.server.LocalServices;
- import com.android.server.inputmethod.InputMethodManagerInternal;
- import com.android.server.policy.WindowManagerPolicy;
- import com.android.window.flags.Flags;
-@@ -240,6 +241,14 @@ class KeyguardController {
-         state.mAodShowing = aodShowing;
-         state.writeEventLog("setKeyguardShown");
- 
-+        if (displayId == DEFAULT_DISPLAY && keyguardChanged) {
-+            final GameSpaceService gameSpaceService =
-+                    LocalServices.getService(GameSpaceService.class);
-+            if (gameSpaceService != null) {
-+                gameSpaceService.onKeyguardChanged(keyguardShowing);
-+            }
-+        }
-+
-         if (keyguardChanged || (Flags.aodTransition() && aodChanged)) {
-             if (keyguardChanged) {
-                 // Irrelevant to AOD.
-diff --git a/services/java/com/android/server/SystemServer.java b/services/java/com/android/server/SystemServer.java
-index fc8d39c0431b..140e0322fb53 100644
---- a/services/java/com/android/server/SystemServer.java
-+++ b/services/java/com/android/server/SystemServer.java
-@@ -323,6 +323,7 @@ import com.android.server.wallpapereffectsgeneration.WallpaperEffectsGenerationM
- import com.android.server.wearable.WearableSensingManagerService;
- import com.android.server.webkit.WebViewUpdateService;
- import com.android.server.wm.ActivityTaskManagerService;
-+import com.android.server.wm.GameSpaceService;
- import com.android.server.wm.WindowManagerGlobalLock;
- import com.android.server.wm.WindowManagerService;
- 
-@@ -1773,6 +1774,10 @@ public final class SystemServer implements Dumpable {
-             wm.onInitReady();
-             t.traceEnd();
- 
-+            t.traceBegin("StartGameSpaceService");
-+            mSystemServiceManager.startService(GameSpaceService.class);
-+            t.traceEnd();
-+
-             // Start receiving calls from SensorManager services. Start in a separate thread
-             // because it need to connect to SensorManager. This has to start
-             // after PHASE_WAIT_FOR_SENSOR_SERVICE is done.
--- 
-2.56.0
-
+ }
