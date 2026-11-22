@@ -20,6 +20,7 @@ syncing. Check the output for `FAILED to apply`.
 
 Already-applied patches are skipped through a reverse-apply check, which only
 probes the top of the stack. A series whose commits touch the same files must
-therefore ship as one squashed patch (see `frameworks/base/0003`), so re-running
-the hook is idempotent. Keep the per-feature series elsewhere (e.g.
-~/gamespace-work/patches/los/) for history and bisecting.
+therefore ship as one squashed patch (see the GameSpace fork's
+`patches/frameworks/base/0001`), so re-running the hook is idempotent. Keep the
+per-feature series elsewhere (e.g. ~/gamespace-work/patches/los/) for history
+and bisecting.
