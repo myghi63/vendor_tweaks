@@ -1,7 +1,7 @@
 # Product-scoped tweaks. Soft-inherited from the device device.mk.
 
-# Static RRO (isStatic) that hides the empty strip the keyboard leaves above
-# the gesture nav bar (config_imeDrawsImeNavBar=false, crDroid parity).
-# isStatic = immutable + default-enabled at boot (OverlayConfig); no runtime
-# toggle. To undo: remove the overlay from PRODUCT_PACKAGES and rebuild.
-PRODUCT_PACKAGES += ImeNavBarSpaceOverlay
+# Currently no PRODUCT_PACKAGES tweaks live here.
+# The "hide space under keyboard" (IME nav bar strip) tweak is done in
+# patches/frameworks/base/0004-* (gestural overlay flips config_imeDrawsImeNavBar
+# to false) instead of a RRO: runtime-enabled overlays (e.g. the gestural one,
+# bumped to MAX priority when picked in Settings) always outrank static RROs.

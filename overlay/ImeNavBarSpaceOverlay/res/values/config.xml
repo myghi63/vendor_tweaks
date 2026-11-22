@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Gesture navigation: do not reserve the empty nav bar strip below the
-         keyboard. Overrides NavigationBarModeGesturalOverlay (priority 1),
-         which sets this to true whenever gestural navigation is selected. -->
-    <bool name="config_imeDrawsImeNavBar">false</bool>
-</resources>
