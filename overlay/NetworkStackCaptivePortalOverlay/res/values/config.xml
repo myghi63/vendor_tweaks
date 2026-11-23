@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-FileCopyrightText: 2026 Myghi63
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <!-- Replace the Google connectivity probes (connectivitycheck.gstatic.com /
+         www.google.com) with Cloudflare's own captive-portal endpoint. Only
+         HTTP 204 counts as success; cp.cloudflare.com answers 204 on HTTP and
+         HTTPS, IPv4 and IPv6 (verified 2026-11-23). one.one.one.one/generate_204
+         answers 404 and would be reported as "no internet". -->
+    <string name="config_captive_portal_http_url" translatable="false">http://cp.cloudflare.com/generate_204</string>
+    <string name="config_captive_portal_https_url" translatable="false">https://cp.cloudflare.com/generate_204</string>
+
+    <!-- Fallback probes when the main one fails: Cloudflare plus one neutral
+         second provider so a network blocking Cloudflare does not read as a
+         portal. No literal commas allowed in these URLs. -->
+    <string-array name="config_captive_portal_fallback_urls" translatable="false">
+        <item>http://cp.cloudflare.com/gen_204</item>
+        <item>http://connectivity-check.ubuntu.com/</item>
+    </string-array>
+
+    <!-- DNS servers used when DHCP hands out none (8.8.4.4/8.8.8.8 would be
+         the hardcoded last resorts). -->
+    <string-array name="config_default_dns_servers" translatable="false">
+        <item>1.1.1.1</item>
+        <item>1.0.0.1</item>
+    </string-array>
+</resources>

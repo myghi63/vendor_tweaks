@@ -1,0 +1,9 @@
+//
+// SPDX-FileCopyrightText: 2026 Myghi63
+// SPDX-License-Identifier: Apache-2.0
+//
+
+runtime_resource_overlay {
+    name: "NetworkStackCaptivePortalOverlay",
+    product_specific: true,
+}
