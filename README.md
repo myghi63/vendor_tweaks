@@ -24,3 +24,13 @@ therefore ship as one squashed patch (see the GameSpace fork's
 `patches/frameworks/base/0001`), so re-running the hook is idempotent. Keep the
 per-feature series elsewhere (e.g. ~/gamespace-work/patches/los/) for history
 and bisecting.
+
+## License
+
+Apache-2.0 (`LICENSE`).
+
+- `patches/frameworks/base/0001-SystemUI-Implement-burn-in-protection-...patch`:
+  derives from Paranoid Android / FlamingoOS code (Apache-2.0, headers preserved in
+  the patch content), inherited through crDroid.
+- `patches/frameworks/base/0002-NavigationBarModeGesturalOverlay-...patch`, the
+  vendorsetup hook and the mk wiring: original work under Apache-2.0.
