@@ -1,0 +1,43 @@
+From b44aa91960d6a2f5a95b0722633d05bde94ebf02 Mon Sep 17 00:00:00 2001
+From: Myghi63 <myghi63@disroot.org>
+Date: Tue, 24 Nov 2026 02:01:02 -0300
+Subject: [PATCH] update_engine: allow downgrade payload on recovery sideload
+
+Recovery adb sideload runs update_engine_sideload, which applies the payload
+without a confirmation step of its own. DeltaPerformer::ValidateInstall
+refuses payloads older than ro.build.date.utc unless
+HardwareAndroid::AllowDowngrade() passes, and the default needs
+ro.ota.allow_downgrade plus a non-user build: on a user build, sideloading a
+full package older than the installed recovery image always dies with
+kPayloadTimestampError (51). Sideload is a manual, user-initiated action, so
+allow it in the sideload binary; daemon paths are unchanged.
+
+Change-Id: I4d451e3e559224039813487538bee24d52e154c9
+---
+ aosp/hardware_android.cc | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/aosp/hardware_android.cc b/aosp/hardware_android.cc
+index 61b23886..d3050d35 100644
+--- a/aosp/hardware_android.cc
++++ b/aosp/hardware_android.cc
+@@ -265,6 +265,16 @@ int64_t HardwareAndroid::GetBuildTimestamp() const {
+ // Returns true if the device runs an userdebug build, and explicitly allows OTA
+ // downgrade.
+ bool HardwareAndroid::AllowDowngrade() const {
++#ifdef _UE_SIDELOAD
++  // vendor/tweaks: update_engine_sideload (recovery adb sideload) has no
++  // downgrade confirmation of its own; the timestamp check in
++  // DeltaPerformer::ValidateInstall is the only gate, and with the default
++  // behavior it refuses, on user builds, any full package older than the
++  // installed recovery build (kPayloadTimestampError / error 51). Sideload is
++  // a manual, user-initiated action, so allow it in this binary only; the
++  // update_engine daemon paths are unchanged.
++  return true;
++#endif
+   return GetBoolProperty("ro.ota.allow_downgrade", false) &&
+          GetProperty("ro.build.type", "") != "user";
+ }
+-- 
+2.56.0
+
