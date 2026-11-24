@@ -9,7 +9,8 @@
 # (IsRecoveryMode), so the running system stays a plain user build.
 # Effect in recovery: "Install anyway?" on signature failure, downgrade/SPL
 # prompts, Mount /system, Enable ADB, adb_keys copy + adb root, auto adbd and
-# console. The SELinux policy still follows the build variant (user).
+# console. The SELinux hardening of the recovery domain is relaxed
+# separately, via sepolicy/recovery.te (BOARD_VENDOR_SEPOLICY_DIRS below).
 # Kati expands variable values at definition time (no deferred re-expansion),
 # and TARGET_RECOVERY_ROOT_OUT only exists later in envsetup.mk (1022): the
 # path is spelled from PRODUCT_OUT + TARGET_COPY_OUT_RECOVERY, both already
@@ -17,3 +18,11 @@
 # echo commands keep the value free of backslashes and shell $ so no
 # expansion pass can mangle it.
 BOARD_RECOVERY_IMAGE_PREPARE := echo ro.build.type=userdebug >> $(PRODUCT_OUT)/$(TARGET_COPY_OUT_RECOVERY)/root/prop.default && echo ro.debuggable=1 >> $(PRODUCT_OUT)/$(TARGET_COPY_OUT_RECOVERY)/root/prop.default && echo ro.adb.secure=0 >> $(PRODUCT_OUT)/$(TARGET_COPY_OUT_RECOVERY)/root/prop.default
+
+# Flasher zips (microG installer, gapps, AnyKernel kernels...) need a
+# permissive recovery, like the one LOS ships for userdebug/eng.
+# sepolicy/recovery.te adds recovery_only(permissive recovery) and
+# patches/system/sepolicy/0001-* teaches the user-build guard to accept it
+# (official sepolicy.recovery property). Only the recovery policy variant
+# is affected; the running system's policy is untouched.
+BOARD_VENDOR_SEPOLICY_DIRS += vendor/tweaks/sepolicy

@@ -1,0 +1,35 @@
+From 58396e9d7c3e4d3350b5c4d624d284a56926f0d4 Mon Sep 17 00:00:00 2001
+From: Myghi63 <myghi63@disroot.org>
+Date: Mon, 23 Nov 2026 19:40:47 -0300
+Subject: [PATCH] sepolicy.recovery: allow permissive recovery and su on user
+ builds
+
+Flasher zips (microG installer, gapps, AnyKernel kernel zips) run their
+update-binaries in the recovery domain. LOS makes recovery permissive only
+on userdebug/eng; the user variant refuses permissive domains
+(build/soong/policy.go). Whitelist recovery (mirroring that userdebug
+behavior) and su: AnyKernel3 sets its process context to u:r:su:s0 to
+loop-mount apex payloads, and on a user build the su domain is otherwise
+restricted enough that the setcon kills the installer mid-install.
+microdroid uses the same module property for its su domain.
+
+Change-Id: Ia9972163218c726ffd681152d551950fe6db249b
+---
+ Android.bp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Android.bp b/Android.bp
+index e10d906b0..beaa31d1c 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -757,6 +757,7 @@ se_policy_binary {
+     ],
+     stem: "sepolicy",
+     recovery: true,
++    permissive_domains_on_user_builds: ["recovery", "su"],
+ }
+ 
+ //////////////////////////////////
+-- 
+2.56.0
+

@@ -1,0 +1,29 @@
+# Flasher zips (microG installer, gapps, AnyKernel kernel zips, ...) need
+# to run their installer scripts in recovery unrestricted: they toggle
+# SELinux, mount block devices, create mountpoints, device nodes and
+# symlinks, unpack cpio archives, and so on. LOS already makes the
+# recovery domain permissive on userdebug/eng (device/lineage/sepolicy/
+# common/private/recovery.te); mirror it here for the user variant, which
+# is the variant zips are developed and tested against.
+#
+# The build guard refuses permissive domains in user policy
+# (system/sepolicy/build/soong/policy.go, "permissive domains not allowed
+# in user builds"); patches/system/sepolicy/0001-* adds the official
+# module property permissive_domains_on_user_builds to sepolicy.recovery
+# (the same mechanism microdroid uses for its "su" domain) so this one
+# domain passes it.
+#
+# recovery_only() restricts this to the recovery variant of the policy:
+# zero effect on the policy running in the system.
+#
+# "su" too: AnyKernel3 update-binaries run
+#   echo "u:r:su:s0" > /proc/self/attr/current
+# (osm0sis's workaround for loop-mounting apex payloads). On a permissive
+# recovery that setcon now succeeds, and without a permissive su the shell
+# lands in the tightly-restricted user-build su domain and dies mid-install
+# (measured 23/11: update-binary exits 1 right on that line). userdebug
+# recovery works precisely because it runs su permissive; mirror it.
+recovery_only(`
+permissive recovery;
+permissive su;
+')

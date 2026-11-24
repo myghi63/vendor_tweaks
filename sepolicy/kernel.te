@@ -1,0 +1,24 @@
+# AnyKernel3 flasher zips (kernel zips, some gapps installers) loop-mount
+# the APEX payloads to make /apex/com.android.runtime/bin/* exist, because
+# CP2A's /system/bin/linker64 is a symlink into that APEX and post-bind
+# getprop/toolbox cannot execute without it.
+#
+# osm0sis's update-binary setcon's itself to su, mounts /apex as a plain
+# tmpfs (payload files get the tmpfs label) and losetup's the payloads.
+# The loop driver then reads them from worker threads in the kernel
+# domain, which on user builds:
+#  - cannot use fds owned by the su process, and
+#  - cannot read tmpfs-labeled files.
+# Both checks return EIO to the mount (measured 24/11, user recovery:
+# "avc: denied { read } comm=kworker path=/apex/*.img scontext=u:r:kernel
+# tcontext=u:object_r:tmpfs:s0 permissive=0" -> every apex mount fails ->
+# flasher aborts with "Unable to determine boot partition").
+# system/sepolicy/private/kernel.te whitelists exactly this under
+# userdebug_or_eng() (kernel.te:178-179), which is why the same zip works
+# on a userdebug recovery: mirror those rules for the recovery variant of
+# the user policy. Zero effect on the policy running in the system.
+recovery_only(`
+allow kernel su:fd use;
+allow kernel su:file { read open getattr map };
+allow kernel tmpfs:file { read open getattr map };
+')
