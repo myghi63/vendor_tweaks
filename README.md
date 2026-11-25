@@ -5,7 +5,7 @@ Small ROM tweaks kept out of upstream repos. Each ROM has its own branch:
 | Branch | Tweaks |
 |--------|--------|
 | `crDroid-16.0` | Fast-skip boot animation |
-| `lineageOS-24.0` | no-IME-strip gestural overlay, burn-in protection, Cloudflare connectivity probes, userdebug-behaving recovery |
+| `lineageOS-24.0` | no-IME-strip gestural overlay, burn-in protection, Cloudflare connectivity probes, userdebug-behaving recovery, UI thread on the prime core |
 
 ### Cloudflare connectivity probes (`overlay/NetworkStackCaptivePortalOverlay`)
 
@@ -40,6 +40,14 @@ The device tree wires this repo softly, so the build skips it if it is not synce
 
     $(call inherit-product-if-exists, vendor/tweaks/tweaks.mk)
     -include vendor/tweaks/BoardConfig.mk
+
+### UI thread on the prime core (`patches/hardware/lineage/interfaces/0001`)
+
+The power HAL writes the tgid of the app whose HWUI session is reporting frames
+to `/proc/sys/walt/sched_pipeline_special`, so WALT's heavy-task placement
+always puts that app's UI thread first (onto the X4), instead of picking by
+average demand. Cleared when the session pauses or closes. Needs a WALT kernel
+with `sched_heavy_nr` set by the device's powerhint.
 
 ### Patches
 

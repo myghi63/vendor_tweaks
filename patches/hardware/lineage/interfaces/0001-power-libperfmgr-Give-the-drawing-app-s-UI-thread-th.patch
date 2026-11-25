@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Myghi63 <myghi63@disroot.org>
+Date: Wed, 25 Nov 2026 11:02:36 -0300
+Subject: [PATCH] power-libperfmgr: Give the drawing app's UI thread the WALT
+ special slot
+
+WALT's heavy-task placement picks the X4 thread by average demand, so a
+UI thread with short per-frame bursts often loses it to RenderThread and
+lands on a gold core. When an HWUI session reports frames, write its tgid
+(the UI thread's tid) to /proc/sys/walt/sched_pipeline_special so WALT
+always puts that thread first. Clear it when the session pauses or closes.
+
+Mercado Livre feed: 1.00% -> 0.42% jank (median of 4), same power.
+
+Change-Id: I8b69a5e08bdc69975693de5733e630481456d500
+---
+ power-libperfmgr/aidl/PowerHintSession.cpp | 34 ++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/power-libperfmgr/aidl/PowerHintSession.cpp b/power-libperfmgr/aidl/PowerHintSession.cpp
+index 40688bb..e7e6b10 100644
+--- a/power-libperfmgr/aidl/PowerHintSession.cpp
++++ b/power-libperfmgr/aidl/PowerHintSession.cpp
+@@ -64,6 +64,31 @@ static constexpr int32_t kTargetDurationChangeThreshold = 30;  // Percentage cha
+ static const char kHINTNAME_APP_FIRST_FRAME[] = "PER_ADPF_SESSION_FIRST_FRAME";
+ static const char kHINTNAME_SYS_FIRST_FRAME[] = "ALL_ADPF_SESSIONS_FIRST_FRAME";
+ 
++// WALT puts this pid (thread) first when it picks the heavy top-app threads,
++// so the UI thread of the app that is drawing gets the prime core.
++static constexpr char kPipelineSpecialPath[] = "/proc/sys/walt/sched_pipeline_special";
++static std::atomic<int32_t> sPipelineSpecialTgid{0};
++
++static void writePipelineSpecial(int32_t tgid) {
++    if (!::android::base::WriteStringToFile(std::to_string(tgid), kPipelineSpecialPath)) {
++        ALOGV("Failed to write %d to %s", tgid, kPipelineSpecialPath);
++    }
++}
++
++// The tgid of an app is also the tid of its main (UI) thread.
++static void setPipelineSpecial(int32_t tgid) {
++    if (sPipelineSpecialTgid.exchange(tgid) != tgid) {
++        writePipelineSpecial(tgid);
++    }
++}
++
++static void clearPipelineSpecial(int32_t tgid) {
++    int32_t expected = tgid;
++    if (sPipelineSpecialTgid.compare_exchange_strong(expected, 0)) {
++        writePipelineSpecial(0);
++    }
++}
++
+ }  // namespace
+ 
+ template <class HintManagerT, class PowerSessionManagerT>
+@@ -266,6 +291,9 @@ ndk::ScopedAStatus PowerHintSession<HintManagerT, PowerSessionManagerT>::pause()
+         return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_STATE);
+     // Reset to default uclamp value.
+     mDescriptor->is_active.store(false);
++    if (mSessTag == SessionTag::HWUI) {
++        clearPipelineSpecial(mDescriptor->tgid);
++    }
+     mPSManager->pause(mSessionId);
+     mPSManager->setThreadsFromPowerSession(mSessionId, {});
+     ATRACE_INT(mAppDescriptorTrace->trace_active.c_str(), false);
+@@ -302,6 +330,9 @@ ndk::ScopedAStatus PowerHintSession<HintManagerT, PowerSessionManagerT>::close()
+     // Remove the session from PowerSessionManager first to avoid racing.
+     mPSManager->removePowerSession(mSessionId);
+     mDescriptor->is_active.store(false);
++    if (mSessTag == SessionTag::HWUI) {
++        clearPipelineSpecial(mDescriptor->tgid);
++    }
+ 
+     if (mProcTag != ProcessTag::DEFAULT) {
+         HintManager::GetInstance()->UnregisterAdpfUpdateEvent(toString(mProcTag), &mOnAdpfUpdate);
+@@ -437,6 +468,9 @@ ndk::ScopedAStatus PowerHintSession<HintManagerT, PowerSessionManagerT>::reportA
+         ALOGE("Error: shouldn't report duration during pause state.");
+         return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_STATE);
+     }
++    if (mSessTag == SessionTag::HWUI) {
++        setPipelineSpecial(mDescriptor->tgid);
++    }
+     auto adpfConfig = getAdpfProfile();
+     mDescriptor->update_count++;
+     bool isFirstFrame = isTimeout();
+-- 
+2.56.0
+
