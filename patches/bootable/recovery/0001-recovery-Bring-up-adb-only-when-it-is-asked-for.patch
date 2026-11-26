@@ -1,0 +1,75 @@
+From 9144d0f5cf2946c4fdb2198fe9f6252a1c9f8c89 Mon Sep 17 00:00:00 2001
+From: Myghi63 <myghi63@disroot.org>
+Date: Thu, 26 Nov 2026 16:38:52 -0300
+Subject: [PATCH] recovery: Bring up adb only when it is asked for
+
+Auto-configuring the adb gadget at startup gates the menu on the adbd ->
+functionfs -> UDC-bind chain: measured on onyx 2026-11-26 (instrumented
+reboots timed from the host plus host-side USB enumeration events), the
+recovery UI is ready at ~3.5 s while the gadget connects at ~8.7 s, i.e.
+~5 s of black screen before the menu.
+
+adb now comes up only for the Enable ADB menu action (which must also set
+sys.usb.config=adb: the configfs triggers bind the gadget only for that
+config) and for sideload iterations. The auto-configuration trigger was
+IsRoDebuggable() || IsDeviceUnlocked(); with verifiedbootstate=orange it
+ran on every recovery boot. The two helpers become unused and go with it.
+
+Change-Id: If714db3140d67dc518938f96f0d2b4163efcf30a
+---
+ recovery.cpp      |  3 +++
+ recovery_main.cpp | 17 ++++++-----------
+ 2 files changed, 9 insertions(+), 11 deletions(-)
+
+diff --git a/recovery.cpp b/recovery.cpp
+index 44c7261f..d1f8ba0e 100644
+--- a/recovery.cpp
++++ b/recovery.cpp
+@@ -650,6 +650,9 @@ change_menu:
+ 
+       case Device::ENABLE_ADB:
+         android::base::SetProperty("ro.adb.secure.recovery", "0");
++        // vendor/tweaks: the configfs triggers bind the gadget only for
++        // sys.usb.config=adb; restarting adbd alone never brings it up.
++        android::base::SetProperty("sys.usb.config", "adb");
+         android::base::SetProperty("ctl.restart", "adbd");
+         device->RemoveMenuItemForAction(Device::ENABLE_ADB);
+         device->GoHome();
+diff --git a/recovery_main.cpp b/recovery_main.cpp
+index 3dc4c400..00736037 100644
+--- a/recovery_main.cpp
++++ b/recovery_main.cpp
+@@ -69,14 +69,6 @@ static constexpr const char* LOCALE_FILE = "/cache/recovery/last_locale";
+ 
+ static RecoveryUI* ui = nullptr;
+ 
+-static bool IsRoDebuggable() {
+-  return android::base::GetBoolProperty("ro.debuggable", false);
+-}
+-
+-static bool IsDeviceUnlocked() {
+-  return "orange" == android::base::GetProperty("ro.boot.verifiedbootstate", "");
+-}
+-
+ std::string get_build_type() {
+   return android::base::GetProperty("ro.build.type", "");
+ }
+@@ -534,9 +526,12 @@ int main(int argc, char** argv) {
+ 
+   Device::BuiltinAction next_recovery_action = Device::NO_ACTION;
+   while (true) {
+-    // We start adbd in recovery for the device with userdebug build or a unlocked bootloader.
+-    std::string usb_config =
+-        fastboot ? "fastboot" : IsRoDebuggable() || IsDeviceUnlocked() ? "adb" : "none";
++    // vendor/tweaks: bring adb up only when it was explicitly requested (the
++    // Enable ADB menu action or a sideload path). Auto-configuring it here
++    // gates the menu on the adbd -> functionfs -> UDC-bind chain (measured on
++    // onyx 2026-11-26: UI ready at ~3.5 s, USB gadget connect at ~8.7 s).
++    std::string usb_config = fastboot ? "fastboot" :
++        (next_recovery_action == Device::APPLY_ADB_SIDELOAD ? "adb" : "none");
+     std::string usb_state = android::base::GetProperty("sys.usb.state", "none");
+     if (fastboot) {
+       device->PreFastboot();
+-- 
+2.56.0
+
